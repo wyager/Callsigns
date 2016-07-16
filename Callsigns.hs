@@ -101,7 +101,7 @@ process db words = [word | initial <- words, word <- expand initial, good word, 
 
 -- Load the database from "./l_amat/HS.dat"
 db :: IO (Set CS)
-db = processDB . catMaybes . map parseEntry . T.lines <$> TIO.readFile "./l_amat/HS.dat"
+db = processDB . catMaybes . map parseEntry . T.lines <$> TIO.readFile "HS.dat"
 
 -- Cat a dictionary file into this program to generate words from
 main = do
