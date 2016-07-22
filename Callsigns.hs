@@ -1,12 +1,14 @@
 {-# LANGUAGE BangPatterns, OverloadedStrings #-}
 import Data.List (foldl')
 import qualified Data.Map.Strict as Map
-import Data.Set (Set, notMember, member)
+import Data.Set (Set, notMember)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Maybe (catMaybes)
+import Data.Char (isDigit, isUpper, toUpper)
+import Control.Monad (guard)
 
 -- A 5-digit callsign
 data CS = CS !Char !Char !Char !Char !Char deriving (Eq,Ord,Show)
@@ -37,10 +39,9 @@ parseEntry text
         event' = if event == "LIEXP" then Exp else Other
 parseEntry _ = Nothing
 
--- Parse a 5-digit callsign
+-- Parse a 5-digit callsign. Assume it's formatted correctly.
 parseCS :: Text -> Maybe CS
-parseCS text
-    | T.length text == 5 
+parseCS text | T.length text == 5 
     = Just $ CS (at 0) (at 1) (at 2) (at 3) (at 4)
         where at n = T.index text n
 parseCS _ = Nothing
@@ -65,47 +66,43 @@ expand text = case T.length text of
     _ -> []
 
 -- The letters that can be represented by a number. E.g. "E" looks like "3".
-letters = "aAbBeEiIlLoOsStTgG"
-numbers = "448833111100557766"
+letters = "ABEILOSTG"
+numbers = "483110576"
+numMap  = Map.fromList (zip letters numbers)
 
-numSet = Set.fromList letters
-numMap = Map.fromList (zip letters numbers)
+-- Generate a callsign from some text.
+-- E.g. "nergy" becomes "N3RGY" (yours truly).
+-- If the text can't be spelled as a 5-digit callsign, return Nothing.
+toCS :: Text -> Maybe CS
+toCS text = do
+    guard (T.length text == 5)
+    let [a,b,c,d,e] = [toUpper (T.index text n) | n <- [0..4]]
+    number <- Map.lookup b numMap
+    let cs = CS a number c d e
+    guard (valid cs)
+    return cs
 
--- Is a letter like a number?
-num x = x `member` numSet
-
--- What's the number it looks like?
-number x = case Map.lookup x numMap of
-    Just n -> n
-    Nothing -> error ("Invalid number-like character: " ++ [x])
-
--- Check if a string can be turned into a callsign
-good :: Text -> Bool
-good text = case parseCS text of
-    Just (CS a b c d e) -> start && num b && letter c && letter d && letter e
-        where
-        start = a == 'k' || a == 'w' || a == 'n'
-             || a == 'K' || a == 'W' || a == 'N'
-        letter x = ('A' <= x && x <= 'Z')
-                || ('a' <= x && x <= 'z')
-    _ -> False
-
--- Check if a word is unused
-unused :: Set CS -> Text -> Bool
-unused db word = case parseCS (T.toUpper word) of
-        Just (CS a b c d e) -> CS a (number b) c d e `notMember` db
+-- Check if a callsign is valid
+valid :: CS -> Bool
+valid (CS a b c d e) = startIsValid && isDigit b && isUpper c && isUpper d && isUpper e
+    where startIsValid = a == 'K' || a == 'W' || a == 'N'
 
 -- Get all possible words that make sense as callsigns and aren't used
 process :: Set CS -> [Text] -> [Text]
-process db words = [word | initial <- words, word <- expand initial, good word, unused db word]
+process used words = do
+    initial <- words
+    word <- expand initial
+    case toCS word of
+        Just cs | cs `notMember` used -> return word
+        _                             -> fail "Word can't be turned into a new callsign"
 
 -- Load the database from "./l_amat/HS.dat"
-db :: IO (Set CS)
-db = processDB . catMaybes . map parseEntry . T.lines <$> TIO.readFile "HS.dat"
+loadDB :: IO (Set CS)
+loadDB = processDB . catMaybes . map parseEntry . T.lines <$> TIO.readFile "HS.dat"
 
 -- Cat a dictionary file into this program to generate words from
 main = do
-    db <- db
+    db <- loadDB
     words <- T.lines <$> TIO.getContents
-    let nub = Set.toList . Set.fromList
+    let nub = Set.toList . Set.fromList -- Remove duplicates
     mapM_ print $ nub $ process db words
