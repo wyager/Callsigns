@@ -96,13 +96,13 @@ process used words = do
         Just cs | cs `notMember` used -> return word
         _                             -> fail "Word can't be turned into a new callsign"
 
--- Load the database from "./l_amat/HS.dat"
-loadDB :: IO (Set CS)
-loadDB = processDB . catMaybes . map parseEntry . T.lines <$> TIO.readFile "HS.dat"
+-- Load the database
+loadDB :: FilePath -> IO (Set CS)
+loadDB path = processDB . catMaybes . map parseEntry . T.lines <$> TIO.readFile path
 
 -- Cat a dictionary file into this program to generate words from
 main = do
-    db <- loadDB
+    db <- loadDB "HS.dat"
     words <- T.lines <$> TIO.getContents
     let nub = Set.toList . Set.fromList -- Remove duplicates
     mapM_ print $ nub $ process db words
