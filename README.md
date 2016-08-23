@@ -3,6 +3,8 @@ A program that generates available 5-digit callsigns
 
 To use this, you need to have the `HS.dat` database of callsign events from the FCC, available at [http://wireless.fcc.gov/uls/data/complete/l_amat.zip](http://wireless.fcc.gov/uls/data/complete/l_amat.zip).
 
+You will also need the Glasgow Haskell Compiler, available in the [Haskell Platform](https://www.haskell.org/platform/).
+
 To compile, run `ghc -O2 Callsigns.hs`.
 
 To run, run `cat /usr/share/dict/web2 | ./Callsigns`. You must have `HS.dat` from `l_amat.zip` in the same directory. You can use any dictionary file. The program will also try to use plurals and words with a single letter missing.
