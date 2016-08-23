@@ -1,5 +1,5 @@
 {-# LANGUAGE BangPatterns, OverloadedStrings #-}
-import Data.List (foldl')
+import Data.List (foldl') -- To reduce a list
 import qualified Data.Map.Strict as Map
 import Data.Set (Set, notMember)
 import qualified Data.Set as Set
@@ -8,7 +8,8 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Maybe (catMaybes)
 import Data.Char (isDigit, isUpper, toUpper)
-import Control.Monad (guard)
+import Control.Monad (guard) -- To check the validity of a callsign
+import Control.Applicative ((<$>)) -- Inline version of fmap
 
 -- A 5-digit callsign
 data CS = CS !Char !Char !Char !Char !Char deriving (Eq,Ord,Show)
