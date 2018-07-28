@@ -32,7 +32,6 @@ callsignEvent = do
     endOfLine
     return (callsign, event)
 
-
 callsignWords :: IO (HashMap.HashMap Callsign Text)
 callsignWords = do
     dict <- openFile "/usr/share/dict/web2" ReadMode
@@ -46,8 +45,8 @@ callsignWords = do
     _ <- either (error . show . fst) return result
     return callsignToWord
 
-used :: (Callsign -> Bool) -> IO (HashSet.HashSet Callsign)
-used isInteresting = do
+alreadyUsed :: (Callsign -> Bool) -> IO (HashSet.HashSet Callsign)
+alreadyUsed isInteresting = do
     hs <- openFile "HS.dat" ReadMode
     let events = PA.parsed callsignEvent (fromHandle hs)
     let interestingEvents = events >-> P.filter (isInteresting . fst)
@@ -62,11 +61,10 @@ used isInteresting = do
 main :: IO ()
 main = do
     goodWords <- callsignWords
-    used <- used (`HashMap.member` goodWords)
+    alreadyUsed <- used (`HashMap.member` goodWords)
     flip mapM_ (HashMap.toList goodWords) $ \(callsign,word) -> do
-        unless (callsign `HashSet.member` used) $ do
+        unless (callsign `HashSet.member` alreadyUsed) $ do
             TIO.putStrLn $ word `T.append` " ~> " `T.append` textOf callsign
-
 
 -- Given a word, generate possible callsign-sized words from it.
 expand :: Text -> [Text]
@@ -78,17 +76,9 @@ expand text = case T.length text of
 
 -- The letters that can be represented by a number. E.g. "E" looks like "3".
 numberFor :: Char -> Maybe Char
-numberFor 'A' = Just '4'
-numberFor 'B' = Just '8'
-numberFor 'E' = Just '3'
-numberFor 'I' = Just '1'
-numberFor 'L' = Just '1'
-numberFor 'O' = Just '0'
-numberFor 'S' = Just '5'
-numberFor 'T' = Just '7'
-numberFor 'G' = Just '6'
-numberFor  _  = Nothing
-
+numberFor c = case c of
+    'A' -> Just '4'; 'B' -> Just '8'; 'E' -> Just '3'; 'I' -> Just '1'; 'L' -> Just '1';
+    'O' -> Just '0'; 'S' -> Just '5'; 'T' -> Just '7'; 'G' -> Just '6'; _   -> Nothing
 
 -- -- Generate a callsign from some text.
 -- -- E.g. "nergy" becomes "N3RGY" (yours truly).
