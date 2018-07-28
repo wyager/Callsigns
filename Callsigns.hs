@@ -1,109 +1,105 @@
-{-# LANGUAGE BangPatterns, OverloadedStrings #-}
-import Data.List (foldl') -- To reduce a list
-import qualified Data.Map.Strict as Map
-import Data.Set (Set, notMember)
-import qualified Data.Set as Set
-import Data.Text (Text)
+{-# LANGUAGE BangPatterns, OverloadedStrings, GeneralizedNewtypeDeriving, TupleSections #-}
+import qualified Data.HashSet as HashSet
+import qualified Data.HashMap.Strict as HashMap
+import           Data.Hashable (Hashable)
+import           Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Maybe (catMaybes)
-import Data.Char (isDigit, isUpper, toUpper)
-import Control.Monad (guard) -- To check the validity of a callsign
-import Control.Applicative ((<$>)) -- Inline version of fmap
+import           Data.Char (toUpper)
+import           Data.Attoparsec.Text (Parser, string, char, takeTill, isEndOfLine, endOfLine)
+import qualified Pipes.Attoparsec as PA
+import           Pipes ((>->))
+import           Pipes.Text.IO (fromHandle)
+import qualified Pipes.Prelude as P
+import           Control.Monad (guard, unless)
+import           Control.Applicative ((<$>), (<|>)) 
+import           System.IO (openFile, IOMode(ReadMode))
 
--- A 5-digit callsign
-data CS = CS !Char !Char !Char !Char !Char deriving (Eq,Ord,Show)
+newtype Callsign = Callsign {textOf :: T.Text} deriving (Show, Eq, Ord, Hashable)
 
--- Callsign expires or callsign is created/renewed/etc.
-data Event = Exp | Other deriving Show
+data Event = Expired | Other  deriving (Show, Eq, Ord)
 
--- An event and its associated callsign
-data Entry = Entry CS Event deriving Show
+callsignEvent :: Parser (Callsign, Event)
+callsignEvent = do
+    let column = takeTill (== '|') <* char '|'
+    string "HS|"
+    _id <- column
+    _ <- column
+    callsign <- Callsign <$> column
+    _date <- column
+    event <-  (string "LIEXP "      *> return Expired) <|> 
+              (takeTill isEndOfLine *> return Other)
+    endOfLine
+    return (callsign, event)
 
--- Take a list of database entries and build a set of in-use 5-digit callsigns
-processDB :: [Entry] -> Set CS
-processDB = foldl' processDB' Set.empty 
 
--- Process a single database entry and update the set
-processDB' :: Set CS -> Entry -> Set CS
-processDB' !things (Entry cs event) = case event of
-    Exp -> Set.delete cs things
-    Other -> Set.insert cs things
+callsignWords :: IO (HashMap.HashMap Callsign Text)
+callsignWords = do
+    dict <- openFile "/usr/share/dict/web2" ReadMode
+    let words = PA.parsed (takeTill isEndOfLine <* endOfLine) (fromHandle dict)
+    let callsignsOfWords = words 
+                        >-> P.mapFoldable expand 
+                        >-> P.mapFoldable (\text -> (,text) <$> callsignFor text)
+    let insert map (cs,txt) = HashMap.insert cs txt map
+    let mapOf = P.fold' insert HashMap.empty id
+    (callsignToWord, result) <- mapOf callsignsOfWords
+    _ <- either (error . show . fst) return result
+    return callsignToWord
 
--- Read a line from the DB
-parseEntry :: Text -> Maybe Entry
-parseEntry text
-    | Just cs' <- parseCS cs
-    = Just (Entry cs' event') 
-        where 
-        [_,_,_,cs,_,event] = T.splitOn "|" text
-        event' = if event == "LIEXP" then Exp else Other
-parseEntry _ = Nothing
+used :: (Callsign -> Bool) -> IO (HashSet.HashSet Callsign)
+used isInteresting = do
+    hs <- openFile "HS.dat" ReadMode
+    let events = PA.parsed callsignEvent (fromHandle hs)
+    let interestingEvents = events >-> P.filter (isInteresting . fst)
+    let include set (callsign,event) = if event == Expired 
+        then HashSet.delete callsign set
+        else HashSet.insert callsign set
+    let latest = P.fold' include HashSet.empty id
+    (used,result) <- latest interestingEvents
+    _ <- either (error . show . fst) return result
+    return used
 
--- Parse a 5-digit callsign. Assume it's formatted correctly.
-parseCS :: Text -> Maybe CS
-parseCS text | T.length text == 5 
-    = Just $ CS (at 0) (at 1) (at 2) (at 3) (at 4)
-        where at n = T.index text n
-parseCS _ = Nothing
+main :: IO ()
+main = do
+    goodWords <- callsignWords
+    used <- used (`HashMap.member` goodWords)
+    flip mapM_ (HashMap.toList goodWords) $ \(callsign,word) -> do
+        unless (callsign `HashSet.member` used) $ do
+            TIO.putStrLn $ word `T.append` " ~> " `T.append` textOf callsign
 
--- "john" becomes
--- ["ohn", "jhn", "jon", "jho"]
-strip :: Text -> [Text]
-strip t = case T.uncons t of
-    Just (c,cs) -> cs : (T.cons c <$> strip cs)
-    Nothing -> []
-
--- Pluralize a word. "cat" becomes "cats".
-s :: Text -> Text
-s t = T.snoc t 's'
 
 -- Given a word, generate possible callsign-sized words from it.
 expand :: Text -> [Text]
 expand text = case T.length text of
-    4 -> [s text]
+    4 -> [text `T.snoc` 's']
     5 -> [text]
-    6 -> strip text
+    6 -> zipWith T.append (T.inits text) (tail (T.tails text))
     _ -> []
 
 -- The letters that can be represented by a number. E.g. "E" looks like "3".
-letters = "ABEILOSTG"
-numbers = "483110576"
-numMap  = Map.fromList (zip letters numbers)
+numberFor :: Char -> Maybe Char
+numberFor 'A' = Just '4'
+numberFor 'B' = Just '8'
+numberFor 'E' = Just '3'
+numberFor 'I' = Just '1'
+numberFor 'L' = Just '1'
+numberFor 'O' = Just '0'
+numberFor 'S' = Just '5'
+numberFor 'T' = Just '7'
+numberFor 'G' = Just '6'
+numberFor  _  = Nothing
 
--- Generate a callsign from some text.
--- E.g. "nergy" becomes "N3RGY" (yours truly).
--- If the text can't be spelled as a 5-digit callsign, return Nothing.
-toCS :: Text -> Maybe CS
-toCS text = do
-    guard (T.length text == 5)
-    let [a,b,c,d,e] = [toUpper (T.index text n) | n <- [0..4]]
-    number <- Map.lookup b numMap
-    let cs = CS a number c d e
-    guard (valid cs)
-    return cs
 
--- Check if a callsign is valid
-valid :: CS -> Bool
-valid (CS a b c d e) = startIsValid && isDigit b && isUpper c && isUpper d && isUpper e
-    where startIsValid = a == 'K' || a == 'W' || a == 'N'
-
--- Get all possible words that make sense as callsigns and aren't used
-process :: Set CS -> [Text] -> [Text]
-process used words = do
-    initial <- words
-    word <- expand initial
-    case toCS word of
-        Just cs | cs `notMember` used -> return word
-        _                             -> fail "Word can't be turned into a new callsign"
-
--- Load the database
-loadDB :: FilePath -> IO (Set CS)
-loadDB path = processDB . catMaybes . map parseEntry . T.lines <$> TIO.readFile path
-
--- Cat a dictionary file into this program to generate words from
-main = do
-    db <- loadDB "HS.dat"
-    words <- T.lines <$> TIO.getContents
-    let nub = Set.toList . Set.fromList -- Remove duplicates
-    mapM_ print $ nub $ process db words
+-- -- Generate a callsign from some text.
+-- -- E.g. "nergy" becomes "N3RGY" (yours truly).
+-- -- If the text can't be spelled as a 5-digit callsign, return Nothing.
+callsignFor :: Text -> Maybe Callsign
+callsignFor text = do
+    guard $ (T.length text == 5) && (a == 'K' || a == 'W' || a == 'N')
+    b' <- numberFor b
+    return $ Callsign (a `T.cons` b' `T.cons` T.drop 2 text')
+    where
+    text' = T.map toUpper text
+    at = T.index text'
+    a = at 0
+    b = at 1
