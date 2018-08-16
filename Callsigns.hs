@@ -61,7 +61,7 @@ alreadyUsed isInteresting = do
 main :: IO ()
 main = do
     goodWords <- callsignWords
-    alreadyUsed <- used (`HashMap.member` goodWords)
+    alreadyUsed <- alreadyUsed (`HashMap.member` goodWords)
     flip mapM_ (HashMap.toList goodWords) $ \(callsign,word) -> do
         unless (callsign `HashSet.member` alreadyUsed) $ do
             TIO.putStrLn $ word `T.append` " ~> " `T.append` textOf callsign
