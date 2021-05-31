@@ -1,0 +1,32 @@
+name:                Callsigns
+version:             0.1.0.0
+github:              "wyager/Callsigns"
+license:             BSD3
+author:              "Will Yager"
+maintainer:          "will@yager.io"
+copyright:           "2020 Will Yager"
+
+extra-source-files: []
+
+
+description:         Find nice unused callsigns
+
+default-extensions:  []
+dependencies:
+- base
+- bytestring
+- text
+- unordered-containers
+- attoparsec
+- pipes
+- pipes-text
+- pipes-attoparsec
+- hashable
+
+
+executables:
+  callsigns:
+    main:                Callsigns.hs
+    source-dirs:         .
+    ghc-options:
+    - -O2

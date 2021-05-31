@@ -1,0 +1,8 @@
+resolver:
+  url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/17/14.yaml
+
+packages:
+- .
+
+extra-deps:
+- pipes-text-1.0.0@sha256:0e5201cd499edbcbfb32bec59279938039a094b246c41d2c49c27288509a3e28,3146
