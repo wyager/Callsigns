@@ -1,2 +1,7 @@
 HS.dat
 .DS_Store
+*.Cabal
+*.hi
+*.o
+*.prof
+.stack-work
