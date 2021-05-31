@@ -2,20 +2,22 @@
 import qualified Data.HashSet as HashSet
 import qualified Data.HashMap.Strict as HashMap
 import           Data.Hashable (Hashable)
-import           Data.Text (Text)
-import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
 import           Data.Char (toUpper)
-import           Data.Attoparsec.Text (Parser, string, char, takeTill, isEndOfLine, endOfLine)
-import qualified Pipes.Attoparsec as PA
-import           Pipes ((>->))
-import           Pipes.Text.IO (fromHandle)
-import qualified Pipes.Prelude as P
+import           Data.Attoparsec.ByteString.Char8 (Parser, string, takeTill, char, isEndOfLine, endOfLine)
+import           Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BS8
+import qualified Streaming.ByteString as SB
+import qualified Streaming.ByteString.Char8 as SB8
+import qualified Data.Attoparsec.ByteString.Streaming as ABS
+import qualified Streaming.Prelude as SP
+import           Streaming.Prelude (Of((:>)))
 import           Control.Monad (guard, unless)
 import           Control.Applicative ((<$>), (<|>)) 
 import           System.IO (openFile, IOMode(ReadMode))
+import           Control.Monad.Trans.Resource (runResourceT)
 
-newtype Callsign = Callsign {textOf :: T.Text} deriving (Show, Eq, Ord, Hashable)
+newtype Callsign = Callsign {textOf :: ByteString} deriving (Show, Eq, Ord, Hashable)
 
 data Event = Expired | Other  deriving (Show, Eq, Ord)
 
@@ -27,35 +29,36 @@ callsignEvent = do
     _ <- column
     callsign <- Callsign <$> column
     _date <- column
-    event <-  (string "LIEXP "      *> return Expired) <|> 
-              (takeTill isEndOfLine *> return Other)
+    event <-  (Expired <$ string "LIEXP ") <|> 
+              (Other <$ takeTill (=='\n'))
     endOfLine
     return (callsign, event)
 
-callsignWords :: IO (HashMap.HashMap Callsign Text)
+callsignWords :: IO (HashMap.HashMap Callsign ByteString)
 callsignWords = do
-    dict <- openFile "/usr/share/dict/web2" ReadMode
-    let words = PA.parsed (takeTill isEndOfLine <* endOfLine) (fromHandle dict)
-    let callsignsOfWords = words 
-                        >-> P.mapFoldable expand 
-                        >-> P.mapFoldable (\text -> (,text) <$> callsignFor text)
+    let dict = SB.readFile "/usr/share/dict/web2"
+    let words = ABS.parsed (takeTill (=='\n') <* endOfLine) dict
+    let callsignsOfWords =
+            SP.for words $ \word ->
+                SP.for (SP.each $ expand word) $ \expanded ->
+                    SP.each $ (,expanded) <$> callsignFor expanded
     let insert map (cs,txt) = HashMap.insert cs txt map
-    let mapOf = P.fold' insert HashMap.empty id
-    (callsignToWord, result) <- mapOf callsignsOfWords
-    _ <- either (error . show . fst) return result
+    let loadCallsigns = SP.fold insert HashMap.empty id callsignsOfWords
+    callsignToWord :> result <- runResourceT loadCallsigns
+    () <- either (error . show . fst) return result
     return callsignToWord
 
 alreadyUsed :: (Callsign -> Bool) -> IO (HashSet.HashSet Callsign)
 alreadyUsed isInteresting = do
-    hs <- openFile "HS.dat" ReadMode
-    let events = PA.parsed callsignEvent (fromHandle hs)
-    let interestingEvents = events >-> P.filter (isInteresting . fst)
+    let hs = SB.readFile "HS.dat" 
+    let events = ABS.parsed callsignEvent hs
+    let interestingEvents = SP.filter (isInteresting . fst) events
     let include set (callsign,event) = if event == Expired 
         then HashSet.delete callsign set
         else HashSet.insert callsign set
-    let latest = P.fold' include HashSet.empty id
-    (used,result) <- latest interestingEvents
-    _ <- either (error . show . fst) return result
+    let loadUsed = SP.fold include HashSet.empty id interestingEvents
+    used :> result <- runResourceT loadUsed 
+    () <- either (error . show . fst) return result
     return used
 
 main :: IO ()
@@ -64,14 +67,14 @@ main = do
     alreadyUsed <- alreadyUsed (`HashMap.member` goodWords)
     flip mapM_ (HashMap.toList goodWords) $ \(callsign,word) -> do
         unless (callsign `HashSet.member` alreadyUsed) $ do
-            TIO.putStrLn $ word `T.append` " ~> " `T.append` textOf callsign
+            BS8.putStrLn $ word <> " ~> " <> textOf callsign
 
 -- Given a word, generate possible callsign-sized words from it.
-expand :: Text -> [Text]
-expand text = case T.length text of
-    4 -> [text `T.snoc` 's']
+expand :: ByteString -> [ByteString]
+expand text = case BS.length text of
+    4 -> [text `BS8.snoc` 's']
     5 -> [text]
-    6 -> zipWith T.append (T.inits text) (tail (T.tails text))
+    6 -> zipWith (<>) (BS.inits text) (tail (BS.tails text))
     _ -> []
 
 -- The letters that can be represented by a number. E.g. "E" looks like "3".
@@ -83,13 +86,13 @@ numberFor c = case c of
 -- -- Generate a callsign from some text.
 -- -- E.g. "nergy" becomes "N3RGY" (yours truly).
 -- -- If the text can't be spelled as a 5-digit callsign, return Nothing.
-callsignFor :: Text -> Maybe Callsign
+callsignFor :: ByteString -> Maybe Callsign
 callsignFor text = do
-    guard $ (T.length text == 5) && (a == 'K' || a == 'W' || a == 'N')
+    guard $ (BS.length text == 5) && (a == 'K' || a == 'W' || a == 'N')
     b' <- numberFor b
-    return $ Callsign (a `T.cons` b' `T.cons` T.drop 2 text')
+    return $ Callsign (a `BS8.cons` b' `BS8.cons` BS.drop 2 text')
     where
-    text' = T.map toUpper text
-    at = T.index text'
+    text' = BS8.map toUpper text
+    at = BS8.index text'
     a = at 0
     b = at 1

@@ -15,13 +15,13 @@ default-extensions:  []
 dependencies:
 - base
 - bytestring
-- text
 - unordered-containers
 - attoparsec
-- pipes
-- pipes-text
-- pipes-attoparsec
+- streaming
+- streaming-attoparsec
+- streaming-bytestring
 - hashable
+- resourcet
 
 
 executables:
