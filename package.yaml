@@ -29,4 +29,4 @@ executables:
     main:                Callsigns.hs
     source-dirs:         .
     ghc-options:
-    - -O2
+    - -O2 -Wextra -Wall -Werror

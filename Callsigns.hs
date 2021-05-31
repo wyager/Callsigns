@@ -3,18 +3,16 @@ import qualified Data.HashSet as HashSet
 import qualified Data.HashMap.Strict as HashMap
 import           Data.Hashable (Hashable)
 import           Data.Char (toUpper)
-import           Data.Attoparsec.ByteString.Char8 (Parser, string, takeTill, char, isEndOfLine, endOfLine)
+import           Data.Attoparsec.ByteString.Char8 (Parser, string, takeTill, char, endOfLine)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Streaming.ByteString as SB
-import qualified Streaming.ByteString.Char8 as SB8
 import qualified Data.Attoparsec.ByteString.Streaming as ABS
 import qualified Streaming.Prelude as SP
 import           Streaming.Prelude (Of((:>)))
 import           Control.Monad (guard, unless)
-import           Control.Applicative ((<$>), (<|>)) 
-import           System.IO (openFile, IOMode(ReadMode))
+import           Control.Applicative ((<|>)) 
 import           Control.Monad.Trans.Resource (runResourceT)
 
 newtype Callsign = Callsign {textOf :: ByteString} deriving (Show, Eq, Ord, Hashable)
@@ -24,7 +22,7 @@ data Event = Expired | Other  deriving (Show, Eq, Ord)
 callsignEvent :: Parser (Callsign, Event)
 callsignEvent = do
     let column = takeTill (== '|') <* char '|'
-    string "HS|"
+    _ <- "HS|"
     _id <- column
     _ <- column
     callsign <- Callsign <$> column
@@ -34,20 +32,25 @@ callsignEvent = do
     endOfLine
     return (callsign, event)
 
+-- Get a mapping from call signs (like "K4FKA") 
+-- to their English words ("Kafka")
 callsignWords :: IO (HashMap.HashMap Callsign ByteString)
 callsignWords = do
     let dict = SB.readFile "/usr/share/dict/web2"
-    let words = ABS.parsed (takeTill (=='\n') <* endOfLine) dict
+    let allWords = ABS.parsed (takeTill (=='\n') <* endOfLine) dict
     let callsignsOfWords =
-            SP.for words $ \word ->
+            SP.for allWords $ \word ->
                 SP.for (SP.each $ expand word) $ \expanded ->
                     SP.each $ (,expanded) <$> callsignFor expanded
-    let insert map (cs,txt) = HashMap.insert cs txt map
+    let insert assocs (cs,txt) = HashMap.insert cs txt assocs
     let loadCallsigns = SP.fold insert HashMap.empty id callsignsOfWords
     callsignToWord :> result <- runResourceT loadCallsigns
     () <- either (error . show . fst) return result
     return callsignToWord
 
+-- Find all the callsigns that have already been used,
+-- ignoring those callsigns that don't look like
+-- english words
 alreadyUsed :: (Callsign -> Bool) -> IO (HashSet.HashSet Callsign)
 alreadyUsed isInteresting = do
     let hs = SB.readFile "HS.dat" 
@@ -64,9 +67,9 @@ alreadyUsed isInteresting = do
 main :: IO ()
 main = do
     goodWords <- callsignWords
-    alreadyUsed <- alreadyUsed (`HashMap.member` goodWords)
+    used <- alreadyUsed (`HashMap.member` goodWords)
     flip mapM_ (HashMap.toList goodWords) $ \(callsign,word) -> do
-        unless (callsign `HashSet.member` alreadyUsed) $ do
+        unless (callsign `HashSet.member` used) $ do
             BS8.putStrLn $ word <> " ~> " <> textOf callsign
 
 -- Given a word, generate possible callsign-sized words from it.
